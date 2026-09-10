@@ -5,9 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
-	"os/signal"
 	"strconv"
-	"syscall"
 	"time"
 
 	"github.com/7574-sistemas-distribuidos/tp-nivelador/src/entities"
@@ -15,12 +13,11 @@ import (
 	"github.com/7574-sistemas-distribuidos/tp-nivelador/src/logger"
 	"github.com/7574-sistemas-distribuidos/tp-nivelador/src/protocol"
 	"github.com/7574-sistemas-distribuidos/tp-nivelador/src/safe_socket"
+	"github.com/7574-sistemas-distribuidos/tp-nivelador/src/signals"
 )
 
 const CONNECTION_ATTEMPTS_MAX = 3
 const CONNECTION_ATTEMPS_DELAY_MS = 1000
-
-const ECHO_CLIENT_MESSAGE_DELAY_MS = 1000
 
 type ClientConfig struct {
 	ServerHost    string
@@ -34,6 +31,17 @@ type ClientConfig struct {
 type Client struct {
 	conn   net.Conn
 	config ClientConfig
+}
+
+func checkError(ctx context.Context, action string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if ctx.Err() != nil {
+		return nil
+	}
+	logger.Error(action, logger.Fail, "err", err)
+	return err
 }
 
 func NewClient(config ClientConfig) (*Client, error) {
@@ -68,33 +76,74 @@ func connectToServer(host, port string) (net.Conn, error) {
 	return conn, err
 }
 
+func sendBets(ctx context.Context, client *Client, records [][]string) error {
+	bets, err := entities.BetsFromRecords(records)
+	if err := checkError(ctx, "bets-from-records", err); err != nil {
+		return err
+	}
+
+	betPacket, err := protocol.GenerateBetPacket(bets, client.config.AgencyId)
+	if err := checkError(ctx, "generate-bet-packet", err); err != nil {
+		return err
+	}
+
+	if err := checkError(ctx, "send-packet", safe_socket.SendAll(client.conn, betPacket)); err != nil {
+		return err
+	}
+
+	ack, err := safe_socket.RecvAll(client.conn, 1)
+	if err := checkError(ctx, "recv-ack", err); err != nil {
+		return err
+	}
+	if len(ack) != 1 || ack[0] != byte(protocol.AckBetMessage) {
+		return checkError(ctx, "recv-ack", fmt.Errorf("expected AckBetMessage, received %v", ack))
+	}
+	return nil
+}
+
+func receiveWinnersAndStoreInCSV(ctx context.Context, client *Client) error {
+	const mainAction = "receive-winners-and-store-in-csv"
+	payloadLengthBytes, err := safe_socket.RecvAll(client.conn, 4)
+	if err := checkError(ctx, "recv-winners-bets-amount", err); err != nil {
+		return err
+	}
+
+	payloadLength, err := binary.BigEndian.Uint32(payloadLengthBytes), nil
+
+	logger.Info(mainAction, logger.InProgress, "payload-length", payloadLength)
+	payload, err := safe_socket.RecvAll(client.conn, int(payloadLength))
+	if err := checkError(ctx, "recv-winners-bets-payload", err); err != nil {
+		return err
+	}
+	winners, err := protocol.UnpackWinners(payload)
+	if err := checkError(ctx, "unpack-winners-bets", err); err != nil {
+		return err
+	}
+	var records [][]string
+	for _, winner := range winners {
+		record := entities.BetToRecord(winner)
+		records = append(records, record)
+	}
+	outputFilePath := client.config.OutputDir
+
+	return checkError(ctx, "create-csv-writer", filehandler.WriteCSVFile(outputFilePath, records))
+}
+
 func (client *Client) Run() error {
 	const mainAction = "run-client"
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
-	defer stop()
 
+	ctx, stop := signals.SetupSignalHandler(client.conn)
+	defer stop()
 	defer func() {
 		if client.conn != nil {
 			_ = client.conn.Close()
 		}
 	}()
 
-	go func() {
-		<-ctx.Done()
-		logger.Warn("client-signal", logger.InProgress, "msg", "SIGTERM received, closing network resources")
-		if client.conn != nil {
-			_ = client.conn.Close()
-		}
-	}()
-
-	packetSize, err := strconv.Atoi(client.config.BatchSize)
+	packetSize, _ := strconv.Atoi(client.config.BatchSize)
 	thereArePacketsToSend := true
 	reader, err := filehandler.NewCSVReader(client.config.InputFilePath)
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil
-		}
-		logger.Error("read-csv-file", logger.Fail, "err", err)
+	if err := checkError(ctx, "read-csv-file", err); err != nil {
 		return err
 	}
 	defer reader.Close()
@@ -105,129 +154,39 @@ func (client *Client) Run() error {
 		}
 
 		records, hasMoreRecords, err := reader.ReadBatch(packetSize)
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil
-			}
-			logger.Error("read-batch", logger.Fail, "err", err)
+		if err := checkError(ctx, "read-batch", err); err != nil {
 			return err
 		}
 
 		if len(records) > 0 {
-			bets, err := entities.BetsFromRecords(records)
-			if err != nil {
-				logger.Error("bets-from-records", logger.Fail, "err", err)
-				return err
-			}
-
-			betPacket, err := protocol.GenerateBetPacket(bets, client.config.AgencyId)
-			if err != nil {
-				logger.Error("generate-packets", logger.Fail, "err", err)
-				return err
-			}
-
-			if err := safe_socket.SendAll(client.conn, betPacket); err != nil {
-				if ctx.Err() != nil {
-					return nil
-				}
-				logger.Error("send-packet", logger.Fail, "err", err)
-				return err
-			}
-
-			ack, err := safe_socket.RecvAll(client.conn, 1)
-			if err != nil {
-				if ctx.Err() != nil {
-					return nil
-				}
-				logger.Error("recv-ack", logger.Fail, "err", err)
-				return err
-			}
-			if len(ack) != 1 || ack[0] != byte(protocol.AckBetMessage) {
-				err = fmt.Errorf("expected AckBetMessage, received %v", ack)
-				logger.Error("recv-ack", logger.Fail, "err", err)
+			sendBetsErr := sendBets(ctx, client, records)
+			if err := checkError(ctx, "send-bets", sendBetsErr); err != nil {
 				return err
 			}
 		}
-
 		thereArePacketsToSend = hasMoreRecords
 	}
 
-	if ctx.Err() != nil {
-		return nil
-	}
-
 	allBetsSentPacket, err := protocol.GenerateAllBetsSentPacket(client.config.AgencyId)
-	if err != nil {
-		logger.Error("generate-all-bets-sent-packet", logger.Fail, "err", err)
+	if err := checkError(ctx, "generate-all-bets-sent-packet", err); err != nil {
 		return err
 	}
-	if err := safe_socket.SendAll(client.conn, allBetsSentPacket); err != nil {
-		if ctx.Err() != nil {
-			return nil
-		}
-		logger.Error("send-all-bets-sent-packet", logger.Fail, "err", err)
+
+	if err := checkError(ctx, "send-all-bets-sent-packet", safe_socket.SendAll(client.conn, allBetsSentPacket)); err != nil {
 		return err
 	}
 	response, err := safe_socket.RecvAll(client.conn, 1)
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil
-		}
-		logger.Error("recv-response", logger.Fail, "err", err)
+	if err := checkError(ctx, "recv-response", err); err != nil {
 		return err
 	}
+
 	isWinnerResponse, err := protocol.UnpackMessageType(response)
-
-	if err != nil {
-		logger.Error("unpack-response", logger.Fail, "err", err)
+	if err := checkError(ctx, "unpack-response", err); err != nil {
 		return err
 	}
+
 	if !isWinnerResponse {
-		logger.Error("unpack-response", logger.Fail, "err", "Expected a WinnersMessage or FinalizeMessage, but received an unexpected message type.")
-		return err
+		return checkError(ctx, "unpack-response", fmt.Errorf("expected WinnersMessage, received unexpected message type"))
 	}
-	payloadLengthBytes, err := safe_socket.RecvAll(client.conn, 4)
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil
-		}
-		logger.Error("recv-winners-bets-amount", logger.Fail, "err", err)
-		return err
-	}
-	payloadLength, err := binary.BigEndian.Uint32(payloadLengthBytes), nil
-	if err != nil {
-		logger.Error("unpack-payload-length", logger.Fail, "err", err)
-		return err
-	}
-	logger.Info(mainAction, logger.InProgress, "payload-length", payloadLength)
-	payload, err := safe_socket.RecvAll(client.conn, int(payloadLength))
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil
-		}
-		logger.Error("recv-winners-bets-payload", logger.Fail, "err", err)
-		return err
-	}
-	winners, err := protocol.UnpackWinners(payload)
-	if err != nil {
-		logger.Error("unpack-winners-bets", logger.Fail, "err", err)
-		return err
-	}
-	var records [][]string
-	for _, winner := range winners {
-		record := entities.BetToRecord(winner)
-		records = append(records, record)
-	}
-	outputFilePath := client.config.OutputDir
-
-	if ctx.Err() != nil {
-		return nil
-	}
-	werr := filehandler.WriteCSVFile(outputFilePath, records)
-	if werr != nil {
-		logger.Error("create-csv-writer", logger.Fail, "err", err)
-		return err
-	}
-
-	return nil
+	return receiveWinnersAndStoreInCSV(ctx, client)
 }

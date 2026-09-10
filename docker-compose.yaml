@@ -20,7 +20,7 @@ services:
     - AGENCY_ID=1
     - SERVER_HOST=server
     - SERVER_PORT=5678
-    - INPUT_FILE=/input/input-test-1.csv
+    - INPUT_FILE=/input/input-1.csv
     - OUTPUT_FILE=/output/winners-1.csv
     - BATCH_SIZE=2
     volumes:
@@ -38,7 +38,7 @@ services:
     - AGENCY_ID=2
     - SERVER_HOST=server
     - SERVER_PORT=5678
-    - INPUT_FILE=/input/input-test-2.csv
+    - INPUT_FILE=/input/input-2.csv
     - OUTPUT_FILE=/output/winners-2.csv
     - BATCH_SIZE=2
     volumes:
