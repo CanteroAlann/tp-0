@@ -33,14 +33,18 @@ func GenerateBetPacket(bets []entities.Bet, agencyId string) ([]byte, error) {
 	agencyIdBytes := uint8(agencyIdParsed)
 	messageType := BetMessage
 	header := NewHeader(agencyIdBytes, messageType)
+
 	packet := make([]byte, 0, header.Size()+4+4+payloadLength)
 	packet = append(packet, header.Serialize()...)
+
 	betsAmountBytes := make([]byte, 4)
 	binary.BigEndian.PutUint32(betsAmountBytes, uint32(betsAmount))
 	packet = append(packet, betsAmountBytes...)
+
 	payloadLengthBytes := make([]byte, 4)
 	binary.BigEndian.PutUint32(payloadLengthBytes, uint32(payloadLength))
 	packet = append(packet, payloadLengthBytes...)
+
 	packet = append(packet, betsSerialized...)
 
 	return packet, nil

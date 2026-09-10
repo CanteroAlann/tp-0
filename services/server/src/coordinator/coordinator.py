@@ -16,6 +16,7 @@ class Coordinator:
         self.queue.put(("SHUTDOWN", None))
         for ready_queue in self.ready_agencies.values():
             ready_queue.put(("SHUTDOWN", None))
+            
 
     def start(self):
         logger.info("coordinator", logger.LogResult.in_progress, "start", "Starting coordinator")

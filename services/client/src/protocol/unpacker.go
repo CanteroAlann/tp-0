@@ -41,9 +41,6 @@ func UnpackMessageType(message []byte) (bool, error) {
 	if MessageType(message[0]) == WinnersMessage {
 		return true, nil
 	}
-	if MessageType(message[0]) == FinalizeMessage {
-		return true, nil
-	}
 	if MessageType(message[0]) == AckBetMessage {
 		return true, nil
 	}

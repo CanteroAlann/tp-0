@@ -103,6 +103,7 @@ func sendBets(ctx context.Context, client *Client, records [][]string) error {
 
 func receiveWinnersAndStoreInCSV(ctx context.Context, client *Client) error {
 	const mainAction = "receive-winners-and-store-in-csv"
+
 	payloadLengthBytes, err := safe_socket.RecvAll(client.conn, 4)
 	if err := checkError(ctx, "recv-winners-bets-amount", err); err != nil {
 		return err
