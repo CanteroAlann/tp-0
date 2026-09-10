@@ -23,11 +23,27 @@ func loadConfig() (client.ClientConfig, error) {
 	if serverPort == "" {
 		return client.ClientConfig{}, errors.New("SERVER_PORT environment variable is required")
 	}
+	inputFilePath := os.Getenv("INPUT_FILE")
+	if inputFilePath == "" {
+		return client.ClientConfig{}, errors.New("INPUT_FILE environment variable is required")
+	}
+	outputDir := os.Getenv("OUTPUT_FILE")
+	if outputDir == "" {
+		return client.ClientConfig{}, errors.New("OUTPUT_FILE environment variable is required")
+	}
+
+	bacthSize := os.Getenv("BATCH_SIZE")
+	if bacthSize == "" {
+		return client.ClientConfig{}, errors.New("BATCH_SIZE environment variable is required")
+	}
 
 	return client.ClientConfig{
-		ServerHost: serverHost,
-		ServerPort: serverPort,
-		AgencyId:   agencyId,
+		ServerHost:    serverHost,
+		ServerPort:    serverPort,
+		AgencyId:      agencyId,
+		InputFilePath: inputFilePath,
+		OutputDir:     outputDir,
+		BatchSize:     bacthSize,
 	}, nil
 }
 
@@ -37,7 +53,6 @@ func run() int {
 		logger.Error("load-config", logger.Fail, "err", err)
 		return 1
 	}
-
 	client, err := client.NewClient(config)
 	if err != nil {
 		logger.Error("client-new", logger.Fail, "err", err)
