@@ -7,5 +7,4 @@ const (
 	AckBetMessage
 	AllBetsSentMessage
 	WinnersMessage
-	FinalizeMessage
 )

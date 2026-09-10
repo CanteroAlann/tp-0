@@ -8,6 +8,9 @@ import (
 )
 
 func UnpackWinners(winners []byte) ([]entities.Bet, error) {
+	if winners == nil || len(winners) == 0 {
+		return nil, nil
+	}
 	logger.Info("unpack-winners", logger.InProgress)
 	offset := 0
 	winnersAmount := binary.BigEndian.Uint32(winners[offset : offset+4])
@@ -32,10 +35,10 @@ func UnpackWinners(winners []byte) ([]entities.Bet, error) {
 }
 
 func UnpackMessageType(message []byte) (bool, error) {
-	if MessageType(message[0]) == WinnersMessage {
-		return true, nil
+	if message == nil || len(message) == 0 {
+		return false, nil
 	}
-	if MessageType(message[0]) == FinalizeMessage {
+	if MessageType(message[0]) == WinnersMessage {
 		return true, nil
 	}
 	if MessageType(message[0]) == AckBetMessage {
